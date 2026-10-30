@@ -21,10 +21,13 @@ The implementation follows Parts 1–3 of the supplied build prompt. Part 4
 - [x] Caffeine cache with expiry and invalidation on office/settings writes.
 - [x] Prometheus metrics, JSON logs, problem-style errors and synthetic samples.
 - [x] Docker Compose, migrations, core tests, benchmark scripts and design note.
-- [ ] Run the complete Testcontainers suite and failure-injection tests on a
-  host with Docker available.
-- [ ] Measure and record the 200,000-row diff time, peak heap and event load
-  results on the target machine.
+- [x] Advanced track: concurrency, failure-injection, tenant-isolation and PII
+  tests written (see the rule-to-test map below).
+- [x] Advanced track: one-command benchmark (`python benchmark/run_all.py`).
+- [ ] Run `mvn test` with Docker available and confirm the suite is green
+  (see "Verification status").
+- [ ] Run `python benchmark/run_all.py` on the target machine and paste
+  `benchmark/results/RESULTS.md` into the results section below.
 - [ ] Record and publish a demo video and public repository link.
 
 ## Run locally
@@ -184,22 +187,58 @@ Run unit tests with Maven and Java 21:
 mvn test
 ```
 
-Testcontainers integration tests require Docker. The machine used for these
-instructions does not currently have a running Docker daemon or Java 21, so no
-integration or performance results are claimed here. The benchmark section
-below is a template and must be filled with actual measurements.
+Testcontainers integration tests require Docker; they skip themselves when no
+Docker daemon is available. `AuthorizationMatrixTest` and the other unit tests
+do not need Docker.
+
+### Verification status (read this first)
+
+The advanced-track tests and the benchmark runner were written in an environment
+without Docker, Maven or access to Maven Central, so they have been syntax-checked
+but **not executed**. Before submitting, run `mvn test` once on a machine with
+Docker and fix any failure; an unexecuted test is not evidence. The benchmark
+numbers below are likewise unmeasured until `run_all.py` has been run.
+
+### Rule-to-test map
 
 | Hard rule / scenario | Automated coverage |
 |---|---|
 | Safety threshold and zero-population edge | `SafetyBrakeTest` |
 | Canonical HR fingerprint | `HrFingerprintServiceTest` |
-| HR / transport field ownership | `FieldOwnershipPolicyTest` |
+| HR / transport field ownership | `FieldOwnershipPolicyTest`, `RosterIntegrationTest.hrPayloadCannotOverwriteTransportPreferences` |
 | Per-record validation and no value echo | `HrEventServiceTest` |
+| Idempotent replay, ordering, equal-version conflict | `RosterIntegrationTest` (replay, in/out-of-order, lower version, conflict) |
+| **Concurrency**: version race | `RosterIntegrationTest.higherVersionWinsWhenRequestsArriveConcurrently`, `AdvancedGuaranteesIntegrationTest.versionsRacingInAnyOrderAlwaysLeaveTheHighestVersionAndOneOutboxRowPerApply` |
+| **Concurrency**: identical events at once | `AdvancedGuaranteesIntegrationTest.identicalEventsRacingProduceExactlyOneApplyAndOneOutboxRow` |
+| **Concurrency**: duplicate deliveries at once | `AdvancedGuaranteesIntegrationTest.duplicateDeliveriesRacingReleaseTheSeatAndWriteTheLedgerOnce` |
+| **Failure**: broker outage, backoff, recovery | `AdvancedGuaranteesIntegrationTest.brokerOutageKeepsEventsPendingWithBackoffAndTheyDrainAfterRecovery` |
+| **Failure**: crash mid-transaction (consumer) | `AdvancedGuaranteesIntegrationTest.failureMidCancellationRollsBackTheLedgerSoRedeliveryCompletesTheWork` |
+| **Failure**: crash mid-apply, resume | `RosterIntegrationTest.applyingRunResumesAfterACommittedBatchWasInterrupted` |
+| **Failure**: interrupted upload | `AdvancedGuaranteesIntegrationTest.uploadInterruptedMidStreamFailsTheRunAndAppliesNothing` |
+| Outbox written atomically and published | `RosterIntegrationTest` (no extra row on replay, committed event publishes) |
+| Exactly-once booking cancellation / seat release | `RosterIntegrationTest.duplicateDeactivationDeliveryReleasesASeatOnlyOnce` |
+| Safety brake, audited operator decision | `RosterIntegrationTest.truncatedSnapshotWaitsForAnAuditedOperatorDecision`, `tenantSpecificThresholdControlsTheSafetyBrake` |
+| Invalid / duplicate rows and manifest | `RosterIntegrationTest` (invalid row, duplicate ids, manifest mismatch) |
+| Tenant authorization matrix (role x endpoint x token validity) | `AuthorizationMatrixTest`, `SecurityAccessTest` |
+| Tenant isolation in data and runs | `AdvancedGuaranteesIntegrationTest` (spoofed tenant, cross-tenant reads, other tenant's snapshot), `RosterIntegrationTest.employeeIdsAreScopedByTenantAndSource` |
+| Planted-PII scan (results, errors, logs, outbox payloads) | `AdvancedGuaranteesIntegrationTest.plantedPersonalDataNeverAppearsInResultsErrorsLogsOrOutboxPayloads` |
 | Cache expiry and explicit invalidation | `CachePolicyTest` |
-| Event replay, concurrent ordering, committed outbox publication and duplicate cancellation | `RosterIntegrationTest` (Testcontainers; requires Docker) |
-| Tenant authorization matrix, snapshot crash resume, failure injection and planted-PII scan | Not yet covered |
 
-### Benchmark results — run before reporting
+### Benchmark: one command
+
+```bash
+python benchmark/run_all.py
+```
+
+This runs `docker compose up -d --build`, waits for health, then measures event
+throughput with p50/p99 latency, a 200,000-row snapshot (initial load and an
+identical re-upload), peak JVM heap, and records the machine, Docker resources and
+JVM settings. Output is written to `benchmark/results/RESULTS.md`. Use
+`--rows` and `--requests` for a smaller smoke run, or `--no-compose` if the stack
+is already running. The older scripts in `benchmark/` still work but
+`run_all.py` supersedes them (the old event script counts any HTTP 200 as success).
+
+### Benchmark results (fill from `benchmark/results/RESULTS.md`)
 
 | Measurement | Result |
 |---|---|
@@ -211,8 +250,7 @@ below is a template and must be filled with actual measurements.
 | JVM flags and PostgreSQL version/settings | Not measured |
 | Docker CPU / memory resources | Not measured |
 
-Run scripts in [benchmark/README.md](benchmark/README.md). Do not replace
-“Not measured” with estimated values.
+Do not replace "Not measured" with estimated values.
 
 ## Demo and submission
 
