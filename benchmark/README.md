@@ -1,5 +1,13 @@
 # Benchmark tools
 
+Recommended, one command (see the main README for what it records):
+
+```bash
+python benchmark/run_all.py
+```
+
+The scripts below are the original building blocks and remain usable on their own.
+
 Generate and run the 200,000-row diff benchmark:
 
 ```powershell
