@@ -1,3 +1,4 @@
+
 # HR Roster Sync — design
 
 ## Requirements and assumptions
@@ -111,17 +112,27 @@ sequenceDiagram
 | Snapshot diff | PostgreSQL staging and indexed set-based joins trade disk and database work for bounded JVM memory. |
 | Ownership conflicts | Rejecting transport-owned fields in HR payloads makes ownership mistakes visible while preserving admin data. |
 
+Hardest flow: the sequence diagram above shows a nightly snapshot being applied while live HR events
+for the same employees keep arriving, with an operator decision in the middle and at-least-once delivery
+afterwards. Every employee write, from either path, takes the same per-employee advisory lock and the same
+version check, so whichever commits first is never overwritten by an older version.
+
+Failure modes (T = automated test; all live in `src/test/java/com/moveinsync/roster/`):
+
 | What fails | What the user sees | How the system recovers | Test |
 |---|---|---|---|
-| App crashes after DB commit, before publish | Downstream update is delayed | Publisher resumes pending outbox rows after restart | Outbox recovery integration test |
-| Crash after broker acknowledgement | A message can be delivered twice | Consumer deduplicates by message ID | Consumer redelivery test |
-| RabbitMQ unavailable | Pending events accumulate; alert fires | Retry with backoff and drain after recovery | Broker outage test |
-| Consumer fails mid-cancellation | No partial cancellation is visible | Transaction rolls back; redelivery is safe | Booking rollback test |
-| Truncated nightly export | Run requests operator decision with aggregate counts | Approve or reject; no deactivation before approval | Safety-brake test |
-| Upload interrupted | Run does not complete | Discard incomplete staging and upload again | Interrupted-upload test |
-| Invalid row | Per-record rejection or row error | Other valid records continue; HR corrects and resends | Validation tests |
-| Concurrent conflicting versions | Higher version wins | Lock and re-check version inside transaction | Concurrent event test |
-| Process dies mid-apply | Run remains resumable | Re-enter the idempotent sync engine | Snapshot resume test |
+| App crashes after DB commit, before publish | Downstream update is delayed | Publisher resumes pending outbox rows after restart | `RosterIntegrationTest.committedOutboxEventCanBePublishedAfterTheOriginalRequestReturns` |
+| Crash after broker acknowledgement | A message can be delivered twice | Consumer deduplicates by message ID | `RosterIntegrationTest.duplicateDeactivationDeliveryReleasesASeatOnlyOnce`, `AdvancedGuaranteesIntegrationTest.duplicateDeliveriesRacingReleaseTheSeatAndWriteTheLedgerOnce` |
+| RabbitMQ unavailable | Pending events accumulate; alert fires | Retry with exponential backoff, drain after recovery | `AdvancedGuaranteesIntegrationTest.brokerOutageKeepsEventsPendingWithBackoffAndTheyDrainAfterRecovery` |
+| Consumer fails mid-cancellation | No partial cancellation is visible | Transaction rolls back, ledger row is rolled back too, redelivery completes the work | `AdvancedGuaranteesIntegrationTest.failureMidCancellationRollsBackTheLedgerSoRedeliveryCompletesTheWork` |
+| Truncated nightly export | Run requests operator decision with aggregate counts | Approve or reject; no deactivation before approval | `SafetyBrakeTest`, `RosterIntegrationTest.truncatedSnapshotWaitsForAnAuditedOperatorDecision` |
+| Upload interrupted | Run is marked FAILED; nothing applied | Upload again; the failed run is retained for audit | `AdvancedGuaranteesIntegrationTest.uploadInterruptedMidStreamFailsTheRunAndAppliesNothing` |
+| Row count / checksum mismatch | Run FAILED, nothing applied | HR resends the correct file | `RosterIntegrationTest.manifestMismatchLeavesTheRunFailedAndAppliesNothing` |
+| Invalid row | Per-record rejection or row error | Other valid records continue; HR corrects and resends | `HrEventServiceTest`, `RosterIntegrationTest.invalidSnapshotRowProtectsTheMatchingEmployeeFromDeactivation` |
+| Concurrent conflicting versions | Higher version wins | Advisory lock plus version re-check inside the transaction | `RosterIntegrationTest.higherVersionWinsWhenRequestsArriveConcurrently`, `AdvancedGuaranteesIntegrationTest.versionsRacingInAnyOrderAlwaysLeaveTheHighestVersionAndOneOutboxRowPerApply` |
+| Same event sent many times at once | One APPLIED, the rest DUPLICATE | Per-employee lock serialises them | `AdvancedGuaranteesIntegrationTest.identicalEventsRacingProduceExactlyOneApplyAndOneOutboxRow` |
+| Process dies mid-apply | Run remains resumable | Startup re-enters the idempotent sync engine | `RosterIntegrationTest.applyingRunResumesAfterACommittedBatchWasInterrupted` |
+| Wrong tenant / role / token | 401 or 403 with a generic error code | Request never reaches the service layer | `AuthorizationMatrixTest`, `SecurityAccessTest` |
 
 ## Complexity and scale limits
 
