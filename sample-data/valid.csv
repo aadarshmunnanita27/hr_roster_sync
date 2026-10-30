@@ -1,0 +1,3 @@
+employeeId,sourceVersion,name,email,phone,managerId,officeCode,shift,active
+EMP-1001,1,Example Worker One,worker-one@example.invalid,+10000000001,MGR-1,BLR01,DAY,true
+EMP-1002,1,Example Worker Two,worker-two@example.invalid,+10000000002,MGR-1,BLR02,NIGHT,true

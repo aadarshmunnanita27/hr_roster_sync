@@ -1,0 +1,64 @@
+server:
+  port: 8080
+  shutdown: graceful
+  tomcat:
+    connection-timeout: ${ROSTER_HTTP_CONNECTION_TIMEOUT:5s}
+spring:
+  mvc:
+    async:
+      request-timeout: ${ROSTER_HTTP_TIMEOUT:30s}
+  application:
+    name: hr-roster-sync
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/roster}
+    username: ${SPRING_DATASOURCE_USERNAME:roster}
+    password: ${SPRING_DATASOURCE_PASSWORD:local-roster-only}
+    hikari:
+      connection-timeout: 5000
+      validation-timeout: 3000
+      data-source-properties:
+        options: "-c lock_timeout=${ROSTER_DATABASE_LOCK_TIMEOUT_MS:5000} -c statement_timeout=${ROSTER_DATABASE_STATEMENT_TIMEOUT_MS:30000}"
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 250MB
+      max-request-size: 250MB
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    connection-timeout: ${ROSTER_BROKER_CONNECTION_TIMEOUT:3s}
+    publisher-confirm-type: correlated
+    template:
+      mandatory: true
+      reply-timeout: 3000
+  jackson:
+    default-property-inclusion: non_null
+
+roster:
+  jwt:
+    secret: ${ROSTER_JWT_SECRET:local-only-change-this-secret-before-deployment}
+  reconciliation:
+    safety-threshold-percent: ${ROSTER_SAFETY_THRESHOLD_PERCENT:30}
+    batch-size: ${ROSTER_BATCH_SIZE:2000}
+  cache:
+    maximum-size: 10000
+    ttl: 5m
+  timeouts:
+    database-lock: 5s
+    broker-publish: 3s
+    http: 30s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}

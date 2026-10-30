@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: roster
+      POSTGRES_USER: roster
+      POSTGRES_PASSWORD: local-roster-only
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roster -d roster"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: roster
+      RABBITMQ_DEFAULT_PASS: local-rabbit-only
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/roster
+      SPRING_DATASOURCE_USERNAME: roster
+      SPRING_DATASOURCE_PASSWORD: local-roster-only
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: roster
+      SPRING_RABBITMQ_PASSWORD: local-rabbit-only
+      ROSTER_JWT_SECRET: local-only-change-this-secret-before-deployment
+      ROSTER_SAFETY_THRESHOLD_PERCENT: 30
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+volumes:
+  postgres-data:
